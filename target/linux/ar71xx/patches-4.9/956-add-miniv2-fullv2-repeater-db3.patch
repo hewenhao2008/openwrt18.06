@@ -1,0 +1,797 @@
+Index: linux-4.9.219/arch/mips/ath79/Kconfig
+===================================================================
+--- linux-4.9.219.orig/arch/mips/ath79/Kconfig
++++ linux-4.9.219/arch/mips/ath79/Kconfig
+@@ -2,6 +2,43 @@ if ATH79
+ 
+ menu "Atheros AR71XX/AR724X/AR913X machine selection"
+ 
++config ATH79_MACH_MINIV2
++       bool "MINIV2 support"
++       select SOC_QCA953X
++       select ATH79_DEV_ETH
++       select ATH79_DEV_GPIO_BUTTONS
++       select ATH79_DEV_LEDS_GPIO
++       select ATH79_DEV_M25P80
++       select ATH79_DEV_WMAC
++
++config ATH79_MACH_FULLV2
++       bool "FULLV2 support"
++       select SOC_QCA953X
++       select ATH79_DEV_ETH
++       select ATH79_DEV_GPIO_BUTTONS
++       select ATH79_DEV_LEDS_GPIO
++       select ATH79_DEV_M25P80
++       select ATH79_DEV_WMAC
++
++config ATH79_MACH_REPEATER
++       bool "REPEATER support"
++       select SOC_QCA953X
++       select ATH79_DEV_ETH
++       select ATH79_DEV_GPIO_BUTTONS
++       select ATH79_DEV_LEDS_GPIO
++       select ATH79_DEV_M25P80
++       select ATH79_DEV_WMAC
++
++config ATH79_MACH_DB3
++       bool "DB3 support"
++       select SOC_QCA953X
++       select ATH79_DEV_ETH
++       select ATH79_DEV_GPIO_BUTTONS
++       select ATH79_DEV_LEDS_GPIO
++       select ATH79_DEV_M25P80
++       select ATH79_DEV_WMAC
++
++
+ config ATH79_MACH_AP121
+ 	bool "Atheros AP121 reference board"
+ 	select SOC_AR933X
+Index: linux-4.9.219/arch/mips/ath79/Makefile
+===================================================================
+--- linux-4.9.219.orig/arch/mips/ath79/Makefile
++++ linux-4.9.219/arch/mips/ath79/Makefile
+@@ -38,6 +38,11 @@ obj-$(CONFIG_ATH79_ROUTERBOOT)		+= route
+ #
+ # Machines
+ #
++obj-$(CONFIG_ATH79_MACH_MINIV2)	+= mach-9531-mini-V2.o
++obj-$(CONFIG_ATH79_MACH_FULLV2)	+= mach-9531-full-v2.o
++obj-$(CONFIG_ATH79_MACH_REPEATER)	+= mach-9531-repeater-v1.o
++obj-$(CONFIG_ATH79_MACH_DB3)	+= mach-9531-db3.o
++
+ obj-$(CONFIG_ATH79_MACH_A60)			+= mach-a60.o
+ obj-$(CONFIG_ATH79_MACH_WI2A_AC200I)		+= mach-wi2a-ac200i.o
+ obj-$(CONFIG_ATH79_MACH_ALFA_AP120C)		+= mach-alfa-ap120c.o
+Index: linux-4.9.219/arch/mips/ath79/machtypes.h
+===================================================================
+--- linux-4.9.219.orig/arch/mips/ath79/machtypes.h
++++ linux-4.9.219/arch/mips/ath79/machtypes.h
+@@ -17,6 +17,10 @@
+ enum ath79_mach_type {
+ 	ATH79_MACH_GENERIC_OF = -1,	/* Device tree board */
+ 	ATH79_MACH_GENERIC = 0,
++	ATH79_MACH_MINIV2,	/* 9531 MINIV2 */
++	ATH79_MACH_FULLV2,
++	ATH79_MACH_REPEATER,
++	ATH79_MACH_DB3,
+ 	ATH79_MACH_A40,				/* OpenMesh A40 */
+ 	ATH79_MACH_A60,				/* OpenMesh A60 */
+ 	ATH79_MACH_WI2A_AC200I,			/* Nokia WI2A-AC200i */
+--- /dev/null
++++ b/arch/mips/ath79/mach-9531-db3.c
+@@ -0,0 +1,167 @@
++/*
++ *  TP-LINK TL-WR841N/ND v9/v11
++ *
++ *  Copyright (C) 2014 Matthias Schiffer <mschiffer@universe-factory.net>
++ *  Copyright (C) 2016 Cezary Jackiewicz <cezary@eko.one.pl>
++ *  Copyright (C) 2016 Stijn Segers <francesco.borromini@gmail.com>
++ *
++ *  This program is free software; you can redistribute it and/or modify it
++ *  under the terms of the GNU General Public License version 2 as published
++ *  by the Free Software Foundation.
++ */
++
++#include <linux/gpio.h>
++#include <linux/platform_device.h>
++#include <linux/ar8216_platform.h>
++
++#include <asm/mach-ath79/ath79.h>
++#include <asm/mach-ath79/ar71xx_regs.h>
++
++#include "common.h"
++#include "dev-ap9x-pci.h"
++#include "dev-eth.h"
++#include "dev-gpio-buttons.h"
++#include "dev-leds-gpio.h"
++#include "dev-m25p80.h"
++#include "dev-usb.h"
++#include "dev-wmac.h"
++#include "machtypes.h"
++#include "pci.h"
++
++
++#define MINIV2_GPIO_BTN_RESET	17
++
++#define MINIV2_GPIO_LED_LINK4		11
++#define MINIV2_GPIO_LED_LINK1		16
++#define MINIV2_GPIO_LED_2G		2
++#define MINIV2_GPIO_LED_INTERNET		4
++#define MINIV2_GPIO_LED_SYS		15
++#define MINIV2_GPIO_LED_RGB1		1
++#define MINIV2_GPIO_LED_RGB2		3
++#define MINIV2_GPIO_LED_RGB3		14
++
++
++#define GPIO_EXT_WDT	0
++
++#define MINIV2_KEYS_POLL_INTERVAL	20	/* msecs */
++#define MINIV2_KEYS_DEBOUNCE_INTERVAL (3 * MINIV2_KEYS_POLL_INTERVAL)
++
++
++
++static struct gpio_keys_button miniv2_gpio_keys[] __initdata = {
++	{
++		.desc		= "Reset button",
++		.type		= EV_KEY,
++		.code		= KEY_RESTART,
++		.debounce_interval = MINIV2_KEYS_DEBOUNCE_INTERVAL,
++		.gpio		= MINIV2_GPIO_BTN_RESET,
++		.active_low	= 1,
++	},
++
++};
++
++static struct gpio_led miniv2_leds_gpio[] __initdata = {
++	{
++		.name		= "wifi0",
++		.gpio		= MINIV2_GPIO_LED_2G,
++		.active_low	= 1,
++		.default_state = 1,
++	}, {
++		.name		= "internet",
++		.gpio		= MINIV2_GPIO_LED_INTERNET,
++		.active_low	= 1,
++	}, {
++		.name		= "sys",
++		.gpio		= MINIV2_GPIO_LED_SYS,
++		.active_low	= 1,
++	},{
++		.name		= "lan1",
++		.gpio		= MINIV2_GPIO_LED_LINK1,
++		.active_low	= 1,
++	},{
++		.name		= "lan2",
++		.gpio		= MINIV2_GPIO_LED_LINK4,
++		.active_low	= 1,
++	},{
++		.name		= "rgb1",
++		.gpio		= MINIV2_GPIO_LED_RGB1,
++		.active_low	= 1,
++	},{
++		.name		= "rgb2",
++		.gpio		= MINIV2_GPIO_LED_RGB2,
++		.active_low	= 1,
++	},{
++		.name		= "rgb3",
++		.gpio		= MINIV2_GPIO_LED_RGB3,
++		.active_low	= 1,
++	},
++};
++
++static struct timer_list gpio_wdt_timer;
++
++static void gpio_wdt_toggle(unsigned long gpio)
++{
++	static int state;
++
++	state = !state;
++	gpio_set_value(gpio, state);
++
++	mod_timer(&gpio_wdt_timer,
++		  jiffies + msecs_to_jiffies(500));
++}
++
++static void __init miniv2_setup(void)
++{
++	//u8 *mac = (u8 *) KSEG1ADDR(0x1f01fc00);
++	u8 *ee = (u8 *) KSEG1ADDR(0x1fff1000);
++	/* Disable JTAG, enabling GPIOs 0-3 */
++	/* Configure OBS4 line, for GPIO 4*/
++	ath79_gpio_function_setup(AR934X_GPIO_FUNC_JTAG_DISABLE,
++				 AR934X_GPIO_FUNC_CLK_OBS4_EN);
++
++	gpio_request_one(GPIO_EXT_WDT, GPIOF_OUT_INIT_LOW,
++				 "init gpio watchdog");
++	setup_timer(&gpio_wdt_timer, gpio_wdt_toggle, GPIO_EXT_WDT);
++	gpio_wdt_toggle(GPIO_EXT_WDT);	
++
++	//ath79_gpio_output_select(MINIV2_GPIO_LED_LAN,QCA953X_GPIO_OUT_MUX_LED_LINK4);
++	// ath79_gpio_output_select(MINIV2_GPIO_LED_WAN,QCA953X_GPIO_OUT_MUX_LED_LINK3);
++	ath79_register_m25p80(NULL);
++
++	ath79_setup_ar933x_phy4_switch(true, true);
++
++	ath79_register_mdio(0, 0x0);
++
++	/* LAN */
++	ath79_eth1_data.phy_if_mode = PHY_INTERFACE_MODE_GMII;
++	ath79_eth1_data.duplex = DUPLEX_FULL;
++	ath79_switch_data.phy_poll_mask |= BIT(0);
++	//ath79_init_mac(ath79_eth1_data.mac_addr, mac, 0);
++    ath79_init_mac(ath79_eth1_data.mac_addr, ee+2, 0);
++	ath79_register_eth(1);
++
++	/* WAN */
++	ath79_switch_data.phy4_mii_en = 1;
++	ath79_eth0_data.phy_if_mode = PHY_INTERFACE_MODE_MII;
++	ath79_eth0_data.duplex = DUPLEX_FULL;
++	ath79_eth0_data.speed = SPEED_100;
++	ath79_eth0_data.phy_mask = BIT(0);
++	//ath79_init_mac(ath79_eth0_data.mac_addr, mac, 1);
++	ath79_init_mac(ath79_eth0_data.mac_addr, ee+2, 1);
++	ath79_register_eth(0);
++
++	//ath79_init_mac(tmpmac, mac, 0);
++	ath79_register_wmac(ee, NULL);
++
++	ath79_register_leds_gpio(-1, ARRAY_SIZE(miniv2_leds_gpio),
++				 miniv2_leds_gpio);
++
++	ath79_register_gpio_keys_polled(1, MINIV2_KEYS_POLL_INTERVAL,
++					ARRAY_SIZE(miniv2_gpio_keys),
++					miniv2_gpio_keys);
++	ath79_register_usb();
++	ath79_register_pci();
++}
++
++MIPS_MACHINE(ATH79_MACH_DB3, "db3", "db3",
++	    miniv2_setup);
+\ No newline at end of file
+--- /dev/null
++++ b/arch/mips/ath79/mach-9531-full-v2.c
+@@ -0,0 +1,161 @@
++/*
++ *  TP-LINK TL-WR841N/ND v9/v11
++ *
++ *  Copyright (C) 2014 Matthias Schiffer <mschiffer@universe-factory.net>
++ *  Copyright (C) 2016 Cezary Jackiewicz <cezary@eko.one.pl>
++ *  Copyright (C) 2016 Stijn Segers <francesco.borromini@gmail.com>
++ *
++ *  This program is free software; you can redistribute it and/or modify it
++ *  under the terms of the GNU General Public License version 2 as published
++ *  by the Free Software Foundation.
++ */
++
++#include <linux/gpio.h>
++#include <linux/platform_device.h>
++#include <linux/ar8216_platform.h>
++
++#include <asm/mach-ath79/ath79.h>
++#include <asm/mach-ath79/ar71xx_regs.h>
++
++#include "common.h"
++#include "dev-ap9x-pci.h"
++#include "dev-eth.h"
++#include "dev-gpio-buttons.h"
++#include "dev-leds-gpio.h"
++#include "dev-m25p80.h"
++#include "dev-usb.h"
++#include "dev-wmac.h"
++#include "machtypes.h"
++#include "pci.h"
++
++
++#define MINIV2_GPIO_BTN_RESET	17
++#define MINIV2_GPIO_BTN_SIM		11
++//miniv2
++#define MINIV2_GPIO_LED_2G		12
++#define MINIV2_GPIO_LED_LAN		4
++#define MINIV2_GPIO_LED_WAN		16
++//Libituo
++// #define MINIV2_GPIO_LED_2G		16
++// #define MINIV2_GPIO_LED_LAN		4
++// #define MINIV2_GPIO_LED_WAN		12
++
++#define GPIO_EXT_WDT	0
++
++#define MINIV2_KEYS_POLL_INTERVAL	20	/* msecs */
++#define MINIV2_KEYS_DEBOUNCE_INTERVAL (3 * MINIV2_KEYS_POLL_INTERVAL)
++
++//static const char *miniv2_part_probes[] = {
++//	"tp-link",
++//	NULL,
++//};
++
++//static struct flash_platform_data miniv2_flash_data = {
++//	.part_probes	= miniv2_part_probes,
++//};
++
++
++static struct gpio_keys_button miniv2_gpio_keys[] __initdata = {
++	{
++		.desc		= "Reset button",
++		.type		= EV_KEY,
++		.code		= KEY_RESTART,
++		.debounce_interval = MINIV2_KEYS_DEBOUNCE_INTERVAL,
++		.gpio		= MINIV2_GPIO_BTN_RESET,
++		.active_low	= 1,
++	},
++	{
++		.desc		= "sim button",
++		.type		= EV_KEY,
++		.code		= BTN_0,
++		.debounce_interval = MINIV2_KEYS_DEBOUNCE_INTERVAL,
++		.gpio		= MINIV2_GPIO_BTN_SIM,
++		.active_low	= 1,
++	},
++};
++
++static struct gpio_led miniv2_leds_gpio[] __initdata = {
++	{
++		.name		= "miniv2:2g",
++		.gpio		= MINIV2_GPIO_LED_2G,
++		.active_low	= 1,
++		.default_state = 1,
++	},/* {
++		.name		= "miniv2:lan",
++		.gpio		= MINIV2_GPIO_LED_LAN,
++		.active_low	= 1,
++	}, {
++		.name		= "miniv2:wan",
++		.gpio		= MINIV2_GPIO_LED_WAN,
++		.active_low	= 1,
++	},*/
++};
++
++static struct timer_list gpio_wdt_timer;
++
++static void gpio_wdt_toggle(unsigned long gpio)
++{
++	static int state;
++
++	state = !state;
++	gpio_set_value(gpio, state);
++
++	mod_timer(&gpio_wdt_timer,
++		  jiffies + msecs_to_jiffies(500));
++}
++
++static void __init miniv2_setup(void)
++{
++	//u8 *mac = (u8 *) KSEG1ADDR(0x1f01fc00);
++	u8 *ee = (u8 *) KSEG1ADDR(0x1f031000);
++	/* Disable JTAG, enabling GPIOs 0-3 */
++	/* Configure OBS4 line, for GPIO 4*/
++	ath79_gpio_function_setup(AR934X_GPIO_FUNC_JTAG_DISABLE,
++				 AR934X_GPIO_FUNC_CLK_OBS4_EN);
++
++	gpio_request_one(GPIO_EXT_WDT, GPIOF_OUT_INIT_LOW,
++				 "init gpio watchdog");
++	setup_timer(&gpio_wdt_timer, gpio_wdt_toggle, GPIO_EXT_WDT);
++	gpio_wdt_toggle(GPIO_EXT_WDT);	
++
++	ath79_gpio_output_select(MINIV2_GPIO_LED_LAN,QCA953X_GPIO_OUT_MUX_LED_LINK4);
++	ath79_gpio_output_select(MINIV2_GPIO_LED_WAN,QCA953X_GPIO_OUT_MUX_LED_LINK3);
++	ath79_register_m25p80(NULL);
++
++	ath79_setup_ar933x_phy4_switch(false, false);
++
++	ath79_register_mdio(0, 0x0);
++
++	/* LAN */
++	ath79_eth1_data.phy_if_mode = PHY_INTERFACE_MODE_GMII;
++	ath79_eth1_data.duplex = DUPLEX_FULL;
++	ath79_switch_data.phy_poll_mask |= BIT(4);
++	//ath79_init_mac(ath79_eth1_data.mac_addr, mac, 0);
++    ath79_init_mac(ath79_eth1_data.mac_addr, ee+2, 0);
++	ath79_register_eth(1);
++
++	/* WAN */
++	ath79_switch_data.phy4_mii_en = 1;
++	ath79_eth0_data.phy_if_mode = PHY_INTERFACE_MODE_MII;
++	ath79_eth0_data.duplex = DUPLEX_FULL;
++	ath79_eth0_data.speed = SPEED_100;
++	ath79_eth0_data.phy_mask = BIT(4);
++	//ath79_init_mac(ath79_eth0_data.mac_addr, mac, 1);
++	ath79_init_mac(ath79_eth0_data.mac_addr, ee+2, 1);
++	ath79_register_eth(0);
++
++	//ath79_init_mac(tmpmac, mac, 0);
++	ath79_register_wmac(ee, NULL);
++
++	ath79_register_leds_gpio(-1, ARRAY_SIZE(miniv2_leds_gpio),
++				 miniv2_leds_gpio);
++
++	ath79_register_gpio_keys_polled(1, MINIV2_KEYS_POLL_INTERVAL,
++					ARRAY_SIZE(miniv2_gpio_keys),
++					miniv2_gpio_keys);
++	ath79_register_usb();
++	ath79_register_pci();
++}
++
++MIPS_MACHINE(ATH79_MACH_FULLV2, "fullv2", "fullv2",
++	    miniv2_setup);
+\ No newline at end of file
+--- /dev/null
++++ b/arch/mips/ath79/mach-9531-mini-V2.c
+@@ -0,0 +1,161 @@
++/*
++ *  TP-LINK TL-WR841N/ND v9/v11
++ *
++ *  Copyright (C) 2014 Matthias Schiffer <mschiffer@universe-factory.net>
++ *  Copyright (C) 2016 Cezary Jackiewicz <cezary@eko.one.pl>
++ *  Copyright (C) 2016 Stijn Segers <francesco.borromini@gmail.com>
++ *
++ *  This program is free software; you can redistribute it and/or modify it
++ *  under the terms of the GNU General Public License version 2 as published
++ *  by the Free Software Foundation.
++ */
++
++#include <linux/gpio.h>
++#include <linux/platform_device.h>
++#include <linux/ar8216_platform.h>
++
++#include <asm/mach-ath79/ath79.h>
++#include <asm/mach-ath79/ar71xx_regs.h>
++
++#include "common.h"
++#include "dev-ap9x-pci.h"
++#include "dev-eth.h"
++#include "dev-gpio-buttons.h"
++#include "dev-leds-gpio.h"
++#include "dev-m25p80.h"
++#include "dev-usb.h"
++#include "dev-wmac.h"
++#include "machtypes.h"
++#include "pci.h"
++
++
++#define MINIV2_GPIO_BTN_RESET	17
++#define MINIV2_GPIO_BTN_SIM		11
++//miniv2
++#define MINIV2_GPIO_LED_2G		12
++#define MINIV2_GPIO_LED_LAN		4
++#define MINIV2_GPIO_LED_WAN		16
++//Libituo
++// #define MINIV2_GPIO_LED_2G		16
++// #define MINIV2_GPIO_LED_LAN		4
++// #define MINIV2_GPIO_LED_WAN		12
++
++#define GPIO_EXT_WDT	0
++
++#define MINIV2_KEYS_POLL_INTERVAL	20	/* msecs */
++#define MINIV2_KEYS_DEBOUNCE_INTERVAL (3 * MINIV2_KEYS_POLL_INTERVAL)
++
++//static const char *miniv2_part_probes[] = {
++//	"tp-link",
++//	NULL,
++//};
++
++//static struct flash_platform_data miniv2_flash_data = {
++//	.part_probes	= miniv2_part_probes,
++//};
++
++
++static struct gpio_keys_button miniv2_gpio_keys[] __initdata = {
++	{
++		.desc		= "Reset button",
++		.type		= EV_KEY,
++		.code		= KEY_RESTART,
++		.debounce_interval = MINIV2_KEYS_DEBOUNCE_INTERVAL,
++		.gpio		= MINIV2_GPIO_BTN_RESET,
++		.active_low	= 1,
++	},
++	{
++		.desc		= "sim button",
++		.type		= EV_KEY,
++		.code		= BTN_0,
++		.debounce_interval = MINIV2_KEYS_DEBOUNCE_INTERVAL,
++		.gpio		= MINIV2_GPIO_BTN_SIM,
++		.active_low	= 1,
++	},
++};
++
++static struct gpio_led miniv2_leds_gpio[] __initdata = {
++	{
++		.name		= "miniv2:2g",
++		.gpio		= MINIV2_GPIO_LED_2G,
++		.active_low	= 1,
++		.default_state = 1,
++	},/* {
++		.name		= "miniv2:lan",
++		.gpio		= MINIV2_GPIO_LED_LAN,
++		.active_low	= 1,
++	}, {
++		.name		= "miniv2:wan",
++		.gpio		= MINIV2_GPIO_LED_WAN,
++		.active_low	= 1,
++	},*/
++};
++
++static struct timer_list gpio_wdt_timer;
++
++static void gpio_wdt_toggle(unsigned long gpio)
++{
++	static int state;
++
++	state = !state;
++	gpio_set_value(gpio, state);
++
++	mod_timer(&gpio_wdt_timer,
++		  jiffies + msecs_to_jiffies(500));
++}
++
++static void __init miniv2_setup(void)
++{
++	//u8 *mac = (u8 *) KSEG1ADDR(0x1f01fc00);
++	u8 *ee = (u8 *) KSEG1ADDR(0x1fff1000);
++	/* Disable JTAG, enabling GPIOs 0-3 */
++	/* Configure OBS4 line, for GPIO 4*/
++	ath79_gpio_function_setup(AR934X_GPIO_FUNC_JTAG_DISABLE,
++				 AR934X_GPIO_FUNC_CLK_OBS4_EN);
++
++	gpio_request_one(GPIO_EXT_WDT, GPIOF_OUT_INIT_LOW,
++				 "init gpio watchdog");
++	setup_timer(&gpio_wdt_timer, gpio_wdt_toggle, GPIO_EXT_WDT);
++	gpio_wdt_toggle(GPIO_EXT_WDT);	
++
++	ath79_gpio_output_select(MINIV2_GPIO_LED_LAN,QCA953X_GPIO_OUT_MUX_LED_LINK4);
++	ath79_gpio_output_select(MINIV2_GPIO_LED_WAN,QCA953X_GPIO_OUT_MUX_LED_LINK3);
++	ath79_register_m25p80(NULL);
++
++	ath79_setup_ar933x_phy4_switch(false, false);
++
++	ath79_register_mdio(0, 0x0);
++
++	/* LAN */
++	ath79_eth1_data.phy_if_mode = PHY_INTERFACE_MODE_GMII;
++	ath79_eth1_data.duplex = DUPLEX_FULL;
++	ath79_switch_data.phy_poll_mask |= BIT(4);
++	//ath79_init_mac(ath79_eth1_data.mac_addr, mac, 0);
++    ath79_init_mac(ath79_eth1_data.mac_addr, ee+2, 0);
++	ath79_register_eth(1);
++
++	/* WAN */
++	ath79_switch_data.phy4_mii_en = 1;
++	ath79_eth0_data.phy_if_mode = PHY_INTERFACE_MODE_MII;
++	ath79_eth0_data.duplex = DUPLEX_FULL;
++	ath79_eth0_data.speed = SPEED_100;
++	ath79_eth0_data.phy_mask = BIT(4);
++	//ath79_init_mac(ath79_eth0_data.mac_addr, mac, 1);
++	ath79_init_mac(ath79_eth0_data.mac_addr, ee+2, 1);
++	ath79_register_eth(0);
++
++	//ath79_init_mac(tmpmac, mac, 0);
++	ath79_register_wmac(ee, NULL);
++
++	ath79_register_leds_gpio(-1, ARRAY_SIZE(miniv2_leds_gpio),
++				 miniv2_leds_gpio);
++
++	ath79_register_gpio_keys_polled(1, MINIV2_KEYS_POLL_INTERVAL,
++					ARRAY_SIZE(miniv2_gpio_keys),
++					miniv2_gpio_keys);
++	ath79_register_usb();
++	ath79_register_pci();
++}
++
++MIPS_MACHINE(ATH79_MACH_MINIV2, "miniv2", "miniv2",
++	    miniv2_setup);
+\ No newline at end of file
+--- /dev/null
++++ b/arch/mips/ath79/mach-9531-repeater-v1.c
+@@ -0,0 +1,167 @@
++/*
++ *  TP-LINK TL-WR841N/ND v9/v11
++ *
++ *  Copyright (C) 2014 Matthias Schiffer <mschiffer@universe-factory.net>
++ *  Copyright (C) 2016 Cezary Jackiewicz <cezary@eko.one.pl>
++ *  Copyright (C) 2016 Stijn Segers <francesco.borromini@gmail.com>
++ *
++ *  This program is free software; you can redistribute it and/or modify it
++ *  under the terms of the GNU General Public License version 2 as published
++ *  by the Free Software Foundation.
++ */
++
++#include <linux/gpio.h>
++#include <linux/platform_device.h>
++#include <linux/ar8216_platform.h>
++
++#include <asm/mach-ath79/ath79.h>
++#include <asm/mach-ath79/ar71xx_regs.h>
++
++#include "common.h"
++#include "dev-ap9x-pci.h"
++#include "dev-eth.h"
++#include "dev-gpio-buttons.h"
++#include "dev-leds-gpio.h"
++#include "dev-m25p80.h"
++#include "dev-usb.h"
++#include "dev-wmac.h"
++#include "machtypes.h"
++#include "pci.h"
++
++
++#define MINIV2_GPIO_BTN_RESET	3
++#define MINIV2_GPIO_BTN_WPS		17
++//miniv2
++#define MINIV2_GPIO_LED_4		12
++#define MINIV2_GPIO_LED_3		11
++#define MINIV2_GPIO_LED_SYS		15
++#define MINIV2_GPIO_LED_WAN		2
++//Libituo
++// #define MINIV2_GPIO_LED_2G		16
++// #define MINIV2_GPIO_LED_LAN		4
++// #define MINIV2_GPIO_LED_WAN		12
++
++#define GPIO_EXT_WDT	0
++
++#define MINIV2_KEYS_POLL_INTERVAL	20	/* msecs */
++#define MINIV2_KEYS_DEBOUNCE_INTERVAL (3 * MINIV2_KEYS_POLL_INTERVAL)
++
++//static const char *miniv2_part_probes[] = {
++//	"tp-link",
++//	NULL,
++//};
++
++//static struct flash_platform_data miniv2_flash_data = {
++//	.part_probes	= miniv2_part_probes,
++//};
++
++
++static struct gpio_keys_button miniv2_gpio_keys[] __initdata = {
++	{
++		.desc		= "Reset button",
++		.type		= EV_KEY,
++		.code		= KEY_RESTART,
++		.debounce_interval = MINIV2_KEYS_DEBOUNCE_INTERVAL,
++		.gpio		= MINIV2_GPIO_BTN_RESET,
++		.active_low	= 1,
++	},
++	{
++		.desc		= "wps button",
++		.type		= EV_KEY,
++		.code		= KEY_WPS_BUTTON,
++		.debounce_interval = MINIV2_KEYS_DEBOUNCE_INTERVAL,
++		.gpio		= MINIV2_GPIO_BTN_WPS,
++		.active_low	= 1,
++	},
++};
++
++static struct gpio_led miniv2_leds_gpio[] __initdata = {
++	{
++		.name		= "sys",
++		.gpio		= MINIV2_GPIO_LED_SYS,
++		.active_low	= 1,
++		.default_state = 1,
++	},{
++		.name		= "internet",
++		.gpio		= MINIV2_GPIO_LED_WAN,
++		.active_low	= 1,
++		.default_state = 1,
++	},{
++		.name		= "led4",
++		.gpio		= MINIV2_GPIO_LED_4,
++		.active_low	= 1,
++	}, {
++		.name		= "led3",
++		.gpio		= MINIV2_GPIO_LED_3,
++		.active_low	= 1,
++	},
++};
++
++static struct timer_list gpio_wdt_timer;
++
++static void gpio_wdt_toggle(unsigned long gpio)
++{
++	static int state;
++
++	state = !state;
++	gpio_set_value(gpio, state);
++
++	mod_timer(&gpio_wdt_timer,
++		  jiffies + msecs_to_jiffies(500));
++}
++
++static void __init miniv2_setup(void)
++{
++	//u8 *mac = (u8 *) KSEG1ADDR(0x1f01fc00);
++	u8 *ee = (u8 *) KSEG1ADDR(0x1f031000);
++	/* Disable JTAG, enabling GPIOs 0-3 */
++	/* Configure OBS4 line, for GPIO 4*/
++	ath79_gpio_function_setup(AR934X_GPIO_FUNC_JTAG_DISABLE,
++				 AR934X_GPIO_FUNC_CLK_OBS4_EN);
++
++	gpio_request_one(GPIO_EXT_WDT, GPIOF_OUT_INIT_LOW,
++				 "init gpio watchdog");
++	setup_timer(&gpio_wdt_timer, gpio_wdt_toggle, GPIO_EXT_WDT);
++	gpio_wdt_toggle(GPIO_EXT_WDT);	
++
++	//ath79_gpio_output_select(MINIV2_GPIO_LED_LAN,QCA953X_GPIO_OUT_MUX_LED_LINK5);
++	//ath79_gpio_output_select(MINIV2_GPIO_LED_WAN,QCA953X_GPIO_OUT_MUX_LED_LINK1);
++	ath79_register_m25p80(NULL);
++
++	ath79_setup_ar933x_phy4_switch(false, false);
++
++	ath79_register_mdio(0, 0x0);
++
++	/* LAN */
++	ath79_eth1_data.phy_if_mode = PHY_INTERFACE_MODE_GMII;
++	ath79_eth1_data.duplex = DUPLEX_FULL;
++	ath79_switch_data.phy_poll_mask |= BIT(4);
++	//ath79_init_mac(ath79_eth1_data.mac_addr, mac, 0);
++    ath79_init_mac(ath79_eth1_data.mac_addr, ee+2, 0);
++	ath79_register_eth(1);
++
++	/* WAN */
++	ath79_switch_data.phy4_mii_en = 1;
++	ath79_eth0_data.phy_if_mode = PHY_INTERFACE_MODE_MII;
++	ath79_eth0_data.duplex = DUPLEX_FULL;
++	ath79_eth0_data.speed = SPEED_100;
++	ath79_eth0_data.phy_mask = BIT(4);
++	//ath79_init_mac(ath79_eth0_data.mac_addr, mac, 1);
++	ath79_init_mac(ath79_eth0_data.mac_addr, ee+2, 1);
++	ath79_register_eth(0);
++
++	//ath79_init_mac(tmpmac, mac, 0);
++	ath79_register_wmac(ee, NULL);
++
++	ath79_register_leds_gpio(-1, ARRAY_SIZE(miniv2_leds_gpio),
++				 miniv2_leds_gpio);
++
++	ath79_register_gpio_keys_polled(1, MINIV2_KEYS_POLL_INTERVAL,
++					ARRAY_SIZE(miniv2_gpio_keys),
++					miniv2_gpio_keys);
++	ath79_register_usb();
++	ath79_register_pci();
++}
++
++MIPS_MACHINE(ATH79_MACH_REPEATER, "repeater", "repeater",
++	    miniv2_setup);
+\ No newline at end of file
+--- a/arch/mips/ath79/Kconfig.openwrt
++++ b/arch/mips/ath79/Kconfig.openwrt
+@@ -1,3 +1,43 @@
++config ATH79_MACH_MINIV2
++       bool "MINIV2 support"
++       select SOC_QCA953X
++       select ATH79_DEV_ETH
++       select ATH79_DEV_GPIO_BUTTONS
++       select ATH79_DEV_LEDS_GPIO
++       select ATH79_DEV_M25P80
++       select ATH79_DEV_WMAC
++	   select ATH79_DEV_AP9X_PCI if PCI
++
++config ATH79_MACH_FULLV2
++       bool "FULLV2 support"
++       select SOC_QCA953X
++       select ATH79_DEV_ETH
++       select ATH79_DEV_GPIO_BUTTONS
++       select ATH79_DEV_LEDS_GPIO
++       select ATH79_DEV_M25P80
++       select ATH79_DEV_WMAC
++	   select ATH79_DEV_AP9X_PCI if PCI
++
++config ATH79_MACH_REPEATER
++       bool "REPEATER support"
++       select SOC_QCA953X
++       select ATH79_DEV_ETH
++       select ATH79_DEV_GPIO_BUTTONS
++       select ATH79_DEV_LEDS_GPIO
++       select ATH79_DEV_M25P80
++       select ATH79_DEV_WMAC
++	   select ATH79_DEV_AP9X_PCI if PCI
++
++config ATH79_MACH_DB3
++       bool "DB3 support"
++       select SOC_QCA953X
++       select ATH79_DEV_ETH
++       select ATH79_DEV_GPIO_BUTTONS
++       select ATH79_DEV_LEDS_GPIO
++       select ATH79_DEV_M25P80
++       select ATH79_DEV_WMAC
++	   select ATH79_DEV_AP9X_PCI if PCI
++
+ config ATH79_MACH_A60
+ 	bool "OpenMesh A40/A60 board support"
+ 	select SOC_QCA955X
